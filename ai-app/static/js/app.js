@@ -1,159 +1,89 @@
-/* ── ARIA Frontend ─────────────────────────────────────────────────────── */
+/* ── ARIA app.js ──────────────────────────────────────────────────────────── */
 
-const WS_URL = `ws://${location.host}/ws`;
 const API    = `${location.protocol}//${location.host}`;
+const WS_URL = `ws://${location.host}/ws`;
 
-let ws = null;
-let currentModel = '';
-let isStreaming = false;
-let config = {};
-let pendingFiles = [];
-let currentStreamEl = null;
-let currentStreamText = '';
-let sessionId = null;
+let ws            = null;
+let config        = {};
+let isStreaming   = false;
+let pendingFiles  = [];
+let streamEl      = null;   // current streaming message element
+let streamText    = '';
+let sessionId     = null;
+let sessions      = [];
 
-// ── Particle Background ────────────────────────────────────────────────────
+// ── Particle network ─────────────────────────────────────────────────────────
 
-(function initParticles() {
-  const canvas = document.getElementById('bg-canvas');
-  const ctx = canvas.getContext('2d');
-  let W, H, particles = [];
-  const N = 80;
+(function particles() {
+  const c = document.getElementById('net-canvas');
+  const ctx = c.getContext('2d');
+  let W, H, pts = [];
+  const N = 70;
+  const R = (a, b) => a + Math.random() * (b - a);
 
-  function resize() {
-    W = canvas.width  = window.innerWidth;
-    H = canvas.height = window.innerHeight;
-  }
+  const resize = () => { W = c.width = innerWidth; H = c.height = innerHeight; };
+  const mkPt   = () => ({ x: R(0,W), y: R(0,H), vx: R(-.18,.18), vy: R(-.18,.18), r: R(.8,2.2), a: R(.2,.7) });
 
-  function rand(a, b) { return a + Math.random() * (b - a); }
+  window.addEventListener('resize', resize);
+  resize();
+  pts = Array.from({length: N}, mkPt);
 
-  function createParticle() {
-    return {
-      x: rand(0, W), y: rand(0, H),
-      vx: rand(-0.15, 0.15), vy: rand(-0.15, 0.15),
-      r: rand(1, 2.5),
-      alpha: rand(0.2, 0.7),
-    };
-  }
-
-  function init() {
-    resize();
-    particles = Array.from({ length: N }, createParticle);
-  }
-
-  function draw() {
+  const draw = () => {
     ctx.clearRect(0, 0, W, H);
-
-    // Draw connections
     for (let i = 0; i < N; i++) {
-      for (let j = i + 1; j < N; j++) {
-        const dx = particles[i].x - particles[j].x;
-        const dy = particles[i].y - particles[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 140) {
-          const alpha = (1 - dist / 140) * 0.12;
+      for (let j = i+1; j < N; j++) {
+        const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+        const d = Math.hypot(dx, dy);
+        if (d < 130) {
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(124,58,237,${alpha})`;
-          ctx.lineWidth = 0.5;
-          ctx.moveTo(particles[i].x, particles[i].y);
-          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.strokeStyle = `rgba(124,58,237,${(1-d/130)*.11})`;
+          ctx.lineWidth = .5;
+          ctx.moveTo(pts[i].x, pts[i].y);
+          ctx.lineTo(pts[j].x, pts[j].y);
           ctx.stroke();
         }
       }
-    }
-
-    // Draw particles
-    for (const p of particles) {
+      const p = pts[i];
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(124,58,237,${p.alpha})`;
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(124,58,237,${p.a})`;
       ctx.fill();
-
       p.x += p.vx; p.y += p.vy;
-      if (p.x < 0) p.x = W;
-      if (p.x > W) p.x = 0;
-      if (p.y < 0) p.y = H;
-      if (p.y > H) p.y = 0;
+      if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
     }
-
     requestAnimationFrame(draw);
-  }
-
-  window.addEventListener('resize', resize);
-  init();
+  };
   draw();
 })();
 
-// ── WebSocket ──────────────────────────────────────────────────────────────
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 function connectWS() {
   ws = new WebSocket(WS_URL);
-
-  ws.onopen = () => {
-    setStatus('online', 'Connected');
-    ws.send(JSON.stringify({ type: 'ping' }));
-  };
-
-  ws.onclose = () => {
-    setStatus('offline', 'Disconnected');
-    setTimeout(connectWS, 3000);
-  };
-
-  ws.onerror = () => {
-    setStatus('offline', 'Error');
-  };
-
+  ws.onopen  = () => setStatus('on', 'Connected');
+  ws.onclose = () => { setStatus('', 'Reconnecting…'); setTimeout(connectWS, 2500); };
+  ws.onerror = () => setStatus('err', 'Connection error');
   ws.onmessage = ({ data }) => {
-    let msg;
-    try { msg = JSON.parse(data); } catch { return; }
-    handleWsMessage(msg);
+    let msg; try { msg = JSON.parse(data); } catch { return; }
+    onWsMsg(msg);
   };
 }
 
-function handleWsMessage(msg) {
+function onWsMsg(msg) {
   switch (msg.type) {
 
     case 'start':
-      showTyping(false);
-      currentStreamEl = appendAiMessage('');
-      currentStreamText = '';
+      hideTyping();
+      streamEl   = appendAiMsg('', true);
+      streamText = '';
       break;
 
     case 'chunk':
-      if (!currentStreamEl) {
-        currentStreamEl = appendAiMessage('');
-        currentStreamText = '';
-      }
-      currentStreamText += msg.text;
-      renderStreamChunk(currentStreamEl, currentStreamText, true);
-      scrollToBottom();
-      break;
-
-    case 'tool_call':
-      appendToolCall(msg.name, msg.args);
-      setTypingLabel(`Using ${msg.name}…`);
-      showTyping(true);
-      break;
-
-    case 'tool_running':
-      setTypingLabel(`Running ${msg.name}…`);
-      break;
-
-    case 'tool_result':
-      showTyping(false);
-      appendToolResult(msg.name, msg.result);
-      break;
-
-    case 'done':
-      if (currentStreamEl) {
-        renderStreamChunk(currentStreamEl, currentStreamText, false);
-      }
-      currentStreamEl = null;
-      currentStreamText = '';
-      setStreaming(false);
-      showTyping(false);
-      scrollToBottom();
-      refreshSessions();
+      if (!streamEl) { streamEl = appendAiMsg('', true); streamText = ''; }
+      streamText += msg.text;
+      setStreamContent(streamEl, streamText, true);
+      scrollBottom();
       break;
 
     case 'status':
@@ -161,10 +91,34 @@ function handleWsMessage(msg) {
       showTyping(true);
       break;
 
-    case 'error':
-      showTyping(false);
+    case 'tool_call':
+      appendToolCall(msg.name, msg.args);
+      showTyping(true);
+      setTypingLabel(`Running ${msg.name}…`);
+      break;
+
+    case 'tool_running':
+      setTypingLabel(`Running ${msg.name}…`);
+      break;
+
+    case 'tool_result':
+      hideTyping();
+      appendToolResult(msg.name, msg.result);
+      break;
+
+    case 'done':
+      if (streamEl) setStreamContent(streamEl, streamText, false);
+      streamEl = null; streamText = '';
       setStreaming(false);
-      appendAiMessage(`⚠ ${msg.text}`);
+      hideTyping();
+      scrollBottom();
+      loadSessions();
+      break;
+
+    case 'error':
+      hideTyping();
+      setStreaming(false);
+      appendAiMsg(`⚠ ${msg.text}`, false);
       break;
 
     case 'cleared':
@@ -174,7 +128,7 @@ function handleWsMessage(msg) {
     case 'session_created':
       sessionId = msg.session_id;
       clearChat();
-      refreshSessions();
+      loadSessions();
       break;
 
     case 'session_loaded':
@@ -182,604 +136,519 @@ function handleWsMessage(msg) {
         sessionId = msg.session_id;
         clearChat();
         for (const m of msg.messages) {
-          if (m.role === 'user') appendUserMessage(m.content);
-          else if (m.role === 'assistant') appendAiMessage(m.content, false);
+          if (m.role === 'user')      appendUserMsg(m.content);
+          else if (m.role === 'assistant') appendAiMsg(m.content, false);
         }
-        refreshSessions();
+        loadSessions();
       }
       break;
   }
 }
 
-// ── Sending messages ───────────────────────────────────────────────────────
+// ── Send ──────────────────────────────────────────────────────────────────────
 
-function sendMessage() {
+async function send() {
   if (isStreaming) return;
-  const input = document.getElementById('msg-input');
-  const text  = input.value.trim();
+  const text = qs('#msg-input').value.trim();
   if (!text && pendingFiles.length === 0) return;
 
-  // Handle file uploads first
-  if (pendingFiles.length > 0) {
-    uploadPendingFiles().then(() => {
-      if (text) doSend(text);
-    });
-    return;
+  if (pendingFiles.length) {
+    await uploadFiles();
   }
+  if (!text) return;
 
-  doSend(text);
-  input.value = '';
-  autoResize();
-}
-
-function doSend(text) {
+  qs('#msg-input').value = '';
+  resize_input();
   hideWelcome();
-  appendUserMessage(text);
+  appendUserMsg(text);
   setStreaming(true);
   showTyping(true);
   setTypingLabel('Thinking…');
-
-  ws.send(JSON.stringify({
-    type: 'chat',
-    text,
-    model: currentModel,
-  }));
+  ws.send(JSON.stringify({ type: 'chat', text }));
 }
 
-function sendSuggestion(btn) {
-  const text = btn.querySelector('.icon').nextSibling.textContent.trim();
-  document.getElementById('msg-input').value = text;
-  sendMessage();
+function suggest(btn) {
+  const txt = btn.textContent.trim().replace(/^[^\w]+/, '').trim();
+  qs('#msg-input').value = txt;
+  send();
 }
 
-// ── Message rendering ──────────────────────────────────────────────────────
+// ── Messages ──────────────────────────────────────────────────────────────────
 
-function appendUserMessage(text) {
-  const wrap = document.createElement('div');
-  wrap.className = 'message user';
-  wrap.innerHTML = `
-    <div class="msg-avatar">U</div>
-    <div class="msg-body">
-      <div class="msg-bubble">${escapeHtml(text)}</div>
-      <div class="msg-time">${timeStr()}</div>
-    </div>`;
-  chatInner().appendChild(wrap);
-  scrollToBottom();
-  return wrap;
+function appendUserMsg(text) {
+  const el = mkMsg('user');
+  el.querySelector('.msg-bubble').textContent = text;
+  el.querySelector('.msg-copy').onclick = () => copyText(text);
+  chatInner().appendChild(el);
+  scrollBottom();
+  return el;
 }
 
-function appendAiMessage(text, stream = true) {
-  const aiName = config.ai_name || 'ARIA';
-  const wrap = document.createElement('div');
-  wrap.className = 'message ai';
-  wrap.innerHTML = `
-    <div class="msg-avatar">✦</div>
-    <div class="msg-body">
-      <div class="msg-bubble ${stream ? 'cursor' : ''}" data-raw=""></div>
-      <div class="msg-time">${aiName} · ${timeStr()}</div>
-    </div>`;
-  chatInner().appendChild(wrap);
-  if (text) {
-    renderStreamChunk(wrap, text, stream);
-  }
-  scrollToBottom();
-  return wrap;
+function appendAiMsg(text, streaming = false) {
+  const el = mkMsg('ai');
+  const bubble = el.querySelector('.msg-bubble');
+  if (streaming) bubble.classList.add('streaming');
+  if (text) setStreamContent(el, text, streaming);
+  el.querySelector('.msg-copy').onclick = () => copyText(el.querySelector('.msg-bubble').dataset.raw || '');
+  chatInner().appendChild(el);
+  scrollBottom();
+  return el;
 }
 
-function renderStreamChunk(wrap, text, streaming) {
-  const bubble = wrap.querySelector('.msg-bubble');
+function setStreamContent(msgEl, text, streaming) {
+  const bubble = msgEl.querySelector('.msg-bubble');
   bubble.dataset.raw = text;
-  bubble.innerHTML = parseMarkdown(text);
-  if (streaming) {
-    bubble.classList.add('cursor');
-    addCodeCopyButtons(bubble);
-  } else {
-    bubble.classList.remove('cursor');
-    addCodeCopyButtons(bubble);
-  }
+  bubble.innerHTML = md(text);
+  addCopyBtns(bubble);
+  if (streaming) bubble.classList.add('streaming');
+  else           bubble.classList.remove('streaming');
+}
+
+function mkMsg(role) {
+  const aiName = config.ai_name || 'ARIA';
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  const av = role === 'user' ? 'U' : '✦';
+  div.innerHTML = `
+    <div class="msg-av">${av}</div>
+    <div class="msg-col">
+      <div class="msg-bubble"></div>
+      <div class="msg-meta">
+        <span>${role === 'ai' ? aiName + ' · ' : ''}${now()}</span>
+        <button class="msg-copy" title="Copy">⎘ copy</button>
+      </div>
+    </div>`;
+  return div;
 }
 
 function appendToolCall(name, args) {
   const el = document.createElement('div');
-  el.className = 'tool-call-block';
-  const argsStr = Object.entries(args || {}).map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 60)}`).join(', ');
-  el.innerHTML = `<span class="spin">⚙</span> <strong>${name}</strong> <span style="color:var(--text-muted);font-size:11px;">${argsStr}</span>`;
-  el.id = `tc-${name}-${Date.now()}`;
+  el.className = 'tool-call';
+  const argsStr = Object.entries(args || {})
+    .map(([k, v]) => `${k}: ${JSON.stringify(v).slice(0, 50)}`)
+    .join(', ');
+  el.innerHTML = `<span class="spin">⚙</span> <strong>${esc(name)}</strong><span style="color:var(--text3);margin-left:6px;font-size:11px">${esc(argsStr)}</span>`;
   chatInner().appendChild(el);
-  scrollToBottom();
+  scrollBottom();
 }
 
 function appendToolResult(name, result) {
   const el = document.createElement('div');
-  el.className = 'tool-result-block';
-  const preview = result.slice(0, 120).replace(/</g, '&lt;') + (result.length > 120 ? '…' : '');
+  el.className = 'tool-result';
   el.innerHTML = `
-    <div class="tool-result-header" onclick="this.parentElement.classList.toggle('expanded')">
-      <span>✓ ${name} result</span>
-      <span>▸ expand</span>
+    <div class="tool-result-head" onclick="this.parentElement.classList.toggle('open')">
+      <span>✓ ${esc(name)}</span>
+      <span><span class="chevron">▶</span></span>
     </div>
-    <div class="tool-result-body">${escapeHtml(result)}</div>`;
+    <div class="tool-result-body">${esc(result)}</div>`;
   chatInner().appendChild(el);
-  scrollToBottom();
+  scrollBottom();
 }
 
-function addCodeCopyButtons(bubble) {
+function addCopyBtns(bubble) {
   bubble.querySelectorAll('pre').forEach(pre => {
-    if (pre.querySelector('.code-copy-btn')) return;
+    if (pre.querySelector('.code-copy')) return;
+    const lang = pre.querySelector('code')?.className?.replace('language-','') || 'code';
+    const hdr = document.createElement('div');
+    hdr.className = 'code-header';
     const btn = document.createElement('button');
-    btn.className = 'code-copy-btn';
+    btn.className = 'code-copy';
     btn.textContent = 'Copy';
     btn.onclick = () => {
-      const code = pre.querySelector('code')?.textContent || pre.textContent;
-      navigator.clipboard.writeText(code).then(() => {
-        btn.textContent = '✓ Copied';
-        setTimeout(() => btn.textContent = 'Copy', 1500);
-      });
+      copyText(pre.querySelector('code')?.textContent || pre.textContent);
+      btn.textContent = '✓ Copied';
+      setTimeout(() => btn.textContent = 'Copy', 1600);
     };
-    pre.style.position = 'relative';
-    pre.appendChild(btn);
+    hdr.appendChild(document.createTextNode(lang));
+    hdr.appendChild(btn);
+    pre.insertBefore(hdr, pre.firstChild);
   });
 }
 
-// ── Markdown parser (lightweight) ─────────────────────────────────────────
+// ── Markdown ──────────────────────────────────────────────────────────────────
 
-function parseMarkdown(text) {
-  // Escape HTML first (but preserve what we build)
-  let html = text;
+function md(text) {
+  let h = text;
 
-  // Code blocks (``` ... ```)
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const escaped = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return `<pre><code class="language-${lang || 'text'}">${escaped}</code></pre>`;
-  });
+  // Fenced code blocks
+  h = h.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre><code class="language-${lang||'text'}">${esc(code.trimEnd())}</code></pre>`);
 
   // Inline code
-  html = html.replace(/`([^`\n]+)`/g, (_, c) => `<code>${c.replace(/</g,'&lt;')}</code>`);
+  h = h.replace(/`([^`\n]+)`/g, (_, c) => `<code>${esc(c)}</code>`);
 
-  // Headers
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  // Headings
+  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  h = h.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
+  h = h.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
 
-  // Bold and italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+  // Bold / italic
+  h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
   // Blockquote
-  html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+  h = h.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
 
-  // Horizontal rule
-  html = html.replace(/^---$/gm, '<hr>');
+  // HR
+  h = h.replace(/^---$/gm, '<hr>');
 
-  // Unordered list
-  html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, s => `<ul>${s}</ul>`);
-
-  // Ordered list
-  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+  // Lists
+  h = h.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+  h = h.replace(/(<li>.*<\/li>\n?)+/g, s => `<ul>${s}</ul>`);
+  h = h.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
 
   // Links
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
-  // Tables (simple)
-  html = html.replace(/\|(.+)\|\n\|[-| ]+\|\n((?:\|.+\|\n?)+)/g, (_, header, rows) => {
-    const ths = header.split('|').filter(s => s.trim()).map(h => `<th>${h.trim()}</th>`).join('');
+  // Tables
+  h = h.replace(/\|(.+)\|\n\|[-| ]+\|\n((?:\|.+\|\n?)+)/g, (_, header, rows) => {
+    const ths = header.split('|').filter(s=>s.trim()).map(h=>`<th>${h.trim()}</th>`).join('');
     const trs = rows.trim().split('\n').map(row => {
-      const tds = row.split('|').filter(s => s.trim()).map(c => `<td>${c.trim()}</td>`).join('');
+      const tds = row.split('|').filter(s=>s.trim()).map(c=>`<td>${c.trim()}</td>`).join('');
       return `<tr>${tds}</tr>`;
     }).join('');
     return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
   });
 
-  // Paragraphs — wrap consecutive non-html lines
-  const lines = html.split('\n');
-  const result = [];
-  let para = [];
-
+  // Paragraphs
+  const lines = h.split('\n');
+  const out = []; let para = [];
   for (const line of lines) {
-    const isBlock = /^<(h[1-6]|ul|ol|li|pre|blockquote|hr|table|thead|tbody|tr)/.test(line.trim());
-    if (isBlock) {
-      if (para.length) { result.push(`<p>${para.join(' ')}</p>`); para = []; }
-      result.push(line);
-    } else if (line.trim() === '') {
-      if (para.length) { result.push(`<p>${para.join(' ')}</p>`); para = []; }
-    } else {
-      para.push(line);
-    }
+    const block = /^<(h[1-6]|ul|ol|li|pre|blockquote|hr|table|thead|tbody|tr)/.test(line.trim());
+    if (block) { if (para.length) { out.push(`<p>${para.join(' ')}</p>`); para=[]; } out.push(line); }
+    else if (!line.trim()) { if (para.length) { out.push(`<p>${para.join(' ')}</p>`); para=[]; } }
+    else para.push(line);
   }
-  if (para.length) result.push(`<p>${para.join(' ')}</p>`);
-
-  return result.join('\n');
+  if (para.length) out.push(`<p>${para.join(' ')}</p>`);
+  return out.join('\n');
 }
 
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+// ── UI helpers ────────────────────────────────────────────────────────────────
 
-// ── UI helpers ─────────────────────────────────────────────────────────────
+const qs  = s => document.querySelector(s);
+const qsa = s => document.querySelectorAll(s);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-function chatInner() { return document.getElementById('chat-inner'); }
-function scrollToBottom() {
-  const chat = document.getElementById('chat');
-  chat.scrollTop = chat.scrollHeight;
-}
+function chatInner()   { return qs('#chat-inner'); }
+function scrollBottom() { const el=qs('#chat-scroll'); el.scrollTop=el.scrollHeight; }
+function now()         { return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
 
-function hideWelcome() {
-  document.getElementById('welcome').classList.add('hidden');
-}
+function hideWelcome() { qs('#welcome').classList.add('gone'); }
 
 function clearChat() {
-  const inner = chatInner();
-  // Remove all messages but keep welcome
-  inner.querySelectorAll('.message, .tool-call-block, .tool-result-block').forEach(el => el.remove());
-  document.getElementById('welcome').classList.remove('hidden');
-  currentStreamEl = null;
-  currentStreamText = '';
+  chatInner().querySelectorAll('.msg,.tool-call,.tool-result').forEach(e=>e.remove());
+  qs('#welcome').classList.remove('gone');
+  streamEl=null; streamText='';
 }
 
-function showTyping(show, label = '') {
-  const el = document.getElementById('typing-indicator');
-  el.classList.toggle('visible', show);
-  if (label) setTypingLabel(label);
-  if (show) scrollToBottom();
+function showTyping(show)    { qs('#typing-wrap').classList.toggle('hidden', !show); if(show) scrollBottom(); }
+function hideTyping()        { qs('#typing-wrap').classList.add('hidden'); }
+function setTypingLabel(txt) { qs('#t-label').textContent = txt; }
+
+function setStreaming(v) {
+  isStreaming = v;
+  qs('#send-btn').disabled = v;
+  qs('#msg-input').disabled = v;
 }
 
-function setTypingLabel(text) {
-  document.getElementById('typing-label').textContent = text;
+function setStatus(state, label) {
+  const pip = qs('#status-pip');
+  pip.className = 'status-pip' + (state ? ` ${state}` : '');
+  qs('#status-label').textContent = label;
 }
 
-function setStreaming(val) {
-  isStreaming = val;
-  document.getElementById('send-btn').disabled = val;
-  document.getElementById('msg-input').disabled = val;
+function copyText(txt) {
+  navigator.clipboard.writeText(txt).catch(()=>{});
+  toast('Copied!');
 }
 
-function setStatus(state, text) {
-  document.getElementById('status-dot').className = `status-dot ${state}`;
-  document.getElementById('status-text').textContent = text;
-}
-
-function timeStr() {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function toast(msg, type = 'info') {
-  const c = document.getElementById('toast-container');
+function toast(msg, type='') {
+  const c = qs('#toasts');
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
   c.appendChild(el);
-  setTimeout(() => el.remove(), 3500);
+  setTimeout(()=>el.remove(), 3200);
 }
 
-// ── Model selector ─────────────────────────────────────────────────────────
+function resize_input() {
+  const t = qs('#msg-input');
+  t.style.height='auto';
+  t.style.height = Math.min(t.scrollHeight,180)+'px';
+}
+
+// ── Status / models ───────────────────────────────────────────────────────────
 
 async function loadStatus() {
   try {
-    const res = await fetch(`${API}/api/status`);
-    const data = await res.json();
-    config = data;
+    const r = await fetch(`${API}/api/status`);
+    const d = await r.json();
+    config = d;
 
-    const aiName = data.ai_name || 'ARIA';
-    document.getElementById('ai-name-logo').textContent = aiName;
-    document.getElementById('ai-name-welcome').textContent = aiName;
-    document.title = `${aiName} — Local AI`;
+    const name = d.ai_name || 'ARIA';
+    qs('#brand-name').textContent  = name;
+    qs('#w-name').textContent      = name;
+    document.title                  = name;
+    qs('#model-info-meta').textContent = d.model_name || '';
 
-    // Populate model selector with gguf files found in models/
-    const sel = document.getElementById('model-select');
+    const sel = qs('#model-select');
     sel.innerHTML = '';
-    if (data.model_files && data.model_files.length > 0) {
-      for (const f of data.model_files) {
-        const opt = document.createElement('option');
-        opt.value = opt.textContent = f;
-        if (data.model_name && f === data.model_name) opt.selected = true;
-        sel.appendChild(opt);
+    const files = d.model_files?.length ? d.model_files : (d.model_name ? [d.model_name] : ['No model found']);
+    for (const f of files) {
+      const o = document.createElement('option');
+      o.value = o.textContent = f;
+      if (d.model_name && f === d.model_name) o.selected = true;
+      sel.appendChild(o);
+    }
+
+    if (!d.model_exists) {
+      setStatus('err', 'No model — run download_model.py');
+      toast('No model file found. Run: python download_model.py', 'err');
+    } else if (d.ready) {
+      setStatus('on', `${d.model_name} loaded`);
+    } else {
+      setStatus('on', `${d.model_name} — ready`);
+    }
+  } catch(e) {
+    setStatus('err', 'Server error');
+  }
+}
+
+qs('#model-select').addEventListener('change', async e => {
+  const f = e.target.value;
+  if (!f || f.includes('No model')) return;
+  await fetch(`${API}/api/config`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ model_path: `models/${f}` }),
+  });
+  toast(`Switched to ${f}`, 'ok');
+  qs('#model-info-meta').textContent = f;
+});
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+
+async function loadSessions() {
+  try {
+    const r = await fetch(`${API}/api/sessions`);
+    sessions = await r.json();
+    renderSessions(sessions);
+  } catch(e) {}
+}
+
+function renderSessions(list) {
+  const el = qs('#sessions-list');
+  el.innerHTML = '';
+  for (const s of list) {
+    const item = document.createElement('div');
+    item.className = 'sess-item' + (s.id === sessionId ? ' active' : '');
+    item.innerHTML = `
+      <span class="s-icon">💬</span>
+      <span class="s-title" title="${esc(s.title)}">${esc(s.title)}</span>
+      <button class="sess-del" data-id="${s.id}" title="Delete">✕</button>`;
+    item.addEventListener('click', ev => {
+      if (ev.target.classList.contains('sess-del')) {
+        delSession(ev.target.dataset.id);
+      } else {
+        ws.send(JSON.stringify({ type:'load_session', session_id: s.id }));
       }
-    } else {
-      const opt = document.createElement('option');
-      opt.textContent = data.model_name || 'No model — run download_model.py';
-      sel.appendChild(opt);
-    }
-
-    if (!data.model_exists) {
-      setStatus('offline', 'No model file');
-      toast('No model found. Run: python download_model.py', 'error');
-    } else if (data.ready) {
-      setStatus('online', `${data.model_name} loaded`);
-    } else {
-      setStatus('online', `${data.model_name} — loads on first message`);
-    }
-  } catch (e) {
-    setStatus('offline', 'Server error');
-  }
-}
-
-document.getElementById('model-select').addEventListener('change', async e => {
-  const filename = e.target.value;
-  if (!filename || filename.includes('No model')) return;
-  // Update config with new model path
-  try {
-    await fetch(`${API}/api/config`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ model_path: `models/${filename}` }),
     });
-    toast(`Model switched to ${filename}. It will load on next message.`, 'success');
-  } catch(e) {}
-});
-
-// ── Sessions ───────────────────────────────────────────────────────────────
-
-async function refreshSessions() {
-  try {
-    const res = await fetch(`${API}/api/sessions`);
-    const sessions = await res.json();
-    const list = document.getElementById('sessions-list');
-    list.innerHTML = '';
-    for (const s of sessions) {
-      const el = document.createElement('div');
-      el.className = `session-item${s.id === sessionId ? ' active' : ''}`;
-      el.innerHTML = `
-        <span class="title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
-        <button class="del-btn" data-id="${s.id}">✕</button>`;
-      el.addEventListener('click', (e) => {
-        if (e.target.classList.contains('del-btn')) {
-          deleteSession(e.target.dataset.id);
-        } else {
-          loadSession(s.id);
-        }
-      });
-      list.appendChild(el);
-    }
-  } catch(e) {}
-}
-
-function loadSession(id) {
-  ws.send(JSON.stringify({ type: 'load_session', session_id: id }));
-}
-
-async function deleteSession(id) {
-  await fetch(`${API}/api/session/${id}`, { method: 'DELETE' });
-  if (id === sessionId) { clearChat(); sessionId = null; }
-  refreshSessions();
-}
-
-document.getElementById('new-chat-btn').addEventListener('click', () => {
-  ws.send(JSON.stringify({ type: 'new_session' }));
-});
-
-// ── Knowledge base ─────────────────────────────────────────────────────────
-
-async function refreshKB() {
-  try {
-    const res = await fetch(`${API}/api/knowledge`);
-    const docs = await res.json();
-    const list = document.getElementById('kb-docs-list');
-    list.innerHTML = '';
-    if (docs.length === 0) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px;">No documents yet. Drop files here or use the + Add file button.</div>';
-      return;
-    }
-    for (const d of docs) {
-      const el = document.createElement('div');
-      el.className = 'kb-doc';
-      el.innerHTML = `
-        <span class="name">${escapeHtml(d.source)}</span>
-        <span class="chunks">${d.chunks} chunks</span>
-        <button class="del" data-src="${escapeHtml(d.source)}">✕</button>`;
-      el.querySelector('.del').addEventListener('click', async (e) => {
-        await fetch(`${API}/api/knowledge/${encodeURIComponent(d.source)}`, { method: 'DELETE' });
-        refreshKB();
-      });
-      list.appendChild(el);
-    }
-  } catch(e) {}
-}
-
-document.getElementById('kb-file-input').addEventListener('change', async (e) => {
-  for (const file of e.target.files) {
-    await uploadToKB(file);
+    el.appendChild(item);
   }
-  e.target.value = '';
-  refreshKB();
-  toast('Files added to knowledge base ✓', 'success');
+}
+
+async function delSession(id) {
+  await fetch(`${API}/api/session/${id}`, { method:'DELETE' });
+  if (id === sessionId) { clearChat(); sessionId=null; }
+  loadSessions();
+}
+
+qs('#session-search').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase();
+  renderSessions(sessions.filter(s => s.title.toLowerCase().includes(q)));
+});
+
+qs('#new-chat-btn').addEventListener('click', () => {
+  ws.send(JSON.stringify({ type:'new_session' }));
+});
+
+// ── Knowledge ─────────────────────────────────────────────────────────────────
+
+async function loadKB() {
+  try {
+    const r = await fetch(`${API}/api/knowledge`);
+    const docs = await r.json();
+    const el = qs('#kb-docs');
+    el.innerHTML = '';
+    if (!docs.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:4px">No documents yet. Add files above.</div>'; return; }
+    for (const d of docs) {
+      const item = document.createElement('div');
+      item.className = 'kb-item';
+      item.innerHTML = `
+        <span class="kb-name" title="${esc(d.source)}">${esc(d.source)}</span>
+        <span class="kb-chunks">${d.chunks} chunks</span>
+        <button class="kb-del" data-src="${esc(d.source)}">✕</button>`;
+      item.querySelector('.kb-del').onclick = async () => {
+        await fetch(`${API}/api/knowledge/${encodeURIComponent(d.source)}`, { method:'DELETE' });
+        loadKB();
+      };
+      el.appendChild(item);
+    }
+  } catch(e) {}
+}
+
+qs('#kb-file-input').addEventListener('change', async e => {
+  for (const f of e.target.files) await uploadToKB(f);
+  e.target.value='';
+  loadKB();
+  toast('Files added to knowledge base ✓', 'ok');
 });
 
 async function uploadToKB(file) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('add_to_kb', 'true');
-  await fetch(`${API}/api/upload`, { method: 'POST', body: fd });
+  await fetch(`${API}/api/upload`, { method:'POST', body: fd });
 }
 
-// ── File attachments ───────────────────────────────────────────────────────
+// ── File attachments ──────────────────────────────────────────────────────────
 
-document.getElementById('file-input').addEventListener('change', (e) => {
-  for (const f of e.target.files) addPendingFile(f);
-  e.target.value = '';
+qs('#file-input').addEventListener('change', e => {
+  for (const f of e.target.files) pendingFiles.push(f);
+  e.target.value='';
+  renderAttach();
 });
 
-function addPendingFile(file) {
-  pendingFiles.push(file);
-  renderAttachments();
-}
-
-function renderAttachments() {
-  const bar = document.getElementById('attachments-bar');
-  bar.innerHTML = '';
-  for (let i = 0; i < pendingFiles.length; i++) {
+function renderAttach() {
+  const bar = qs('#attach-strip');
+  bar.innerHTML='';
+  if (!pendingFiles.length) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  pendingFiles.forEach((f, i) => {
     const chip = document.createElement('div');
-    chip.className = 'attachment-chip';
-    chip.innerHTML = `📎 ${escapeHtml(pendingFiles[i].name)} <span class="remove" data-i="${i}">✕</span>`;
-    chip.querySelector('.remove').addEventListener('click', () => {
-      pendingFiles.splice(i, 1);
-      renderAttachments();
-    });
+    chip.className='attach-chip';
+    chip.innerHTML=`📎 ${esc(f.name)} <button class="attach-x" data-i="${i}">✕</button>`;
+    chip.querySelector('.attach-x').onclick = () => { pendingFiles.splice(i,1); renderAttach(); };
     bar.appendChild(chip);
-  }
+  });
 }
 
-async function uploadPendingFiles() {
-  const msg = [];
-  for (const file of pendingFiles) {
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('add_to_kb', 'true');
-    try {
-      const res = await fetch(`${API}/api/upload`, { method: 'POST', body: fd });
-      const data = await res.json();
-      msg.push(`Uploaded "${data.filename}" → added to knowledge base`);
-    } catch (e) {
-      msg.push(`Failed to upload "${file.name}"`);
-    }
-  }
-  pendingFiles = [];
-  renderAttachments();
-  if (msg.length) toast(msg.join('; '), 'success');
+async function uploadFiles() {
+  for (const f of pendingFiles) await uploadToKB(f);
+  toast(`${pendingFiles.length} file(s) added to knowledge base ✓`, 'ok');
+  pendingFiles=[];
+  renderAttach();
 }
 
-// ── Drag and drop ──────────────────────────────────────────────────────────
+// ── Drag & drop ───────────────────────────────────────────────────────────────
 
-let dragCounter = 0;
-
-document.addEventListener('dragenter', (e) => {
-  dragCounter++;
-  document.getElementById('drop-overlay').classList.add('active');
+let dragN = 0;
+document.addEventListener('dragenter', () => { dragN++; qs('#drop-overlay').classList.add('show'); });
+document.addEventListener('dragleave', () => { if(--dragN===0) qs('#drop-overlay').classList.remove('show'); });
+document.addEventListener('dragover',  e => e.preventDefault());
+document.addEventListener('drop', async e => {
+  e.preventDefault(); dragN=0; qs('#drop-overlay').classList.remove('show');
+  for (const f of e.dataTransfer.files) await uploadToKB(f);
+  loadKB();
+  toast(`Files added ✓`, 'ok');
 });
 
-document.addEventListener('dragleave', (e) => {
-  dragCounter--;
-  if (dragCounter === 0) {
-    document.getElementById('drop-overlay').classList.remove('active');
-  }
+// ── Input ─────────────────────────────────────────────────────────────────────
+
+qs('#msg-input').addEventListener('keydown', e => {
+  if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+qs('#msg-input').addEventListener('input', resize_input);
+qs('#send-btn').addEventListener('click', send);
+qs('#clear-btn').addEventListener('click', () => {
+  ws.send(JSON.stringify({ type:'clear' }));
 });
 
-document.addEventListener('dragover', (e) => e.preventDefault());
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 
-document.addEventListener('drop', async (e) => {
-  e.preventDefault();
-  dragCounter = 0;
-  document.getElementById('drop-overlay').classList.remove('active');
-  const files = [...e.dataTransfer.files];
-  for (const f of files) await uploadToKB(f);
-  refreshKB();
-  if (files.length) toast(`${files.length} file(s) added to knowledge base ✓`, 'success');
-});
+qs('#sidebar-toggle').addEventListener('click', () => qs('#sidebar').classList.toggle('open'));
+qs('#collapse-btn').addEventListener('click', () => qs('#sidebar').classList.toggle('collapsed'));
 
-// ── Input ──────────────────────────────────────────────────────────────────
+// ── Slide panels ──────────────────────────────────────────────────────────────
 
-const msgInput = document.getElementById('msg-input');
-
-msgInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-msgInput.addEventListener('input', () => {
-  autoResize();
-  const len = msgInput.value.length;
-  document.getElementById('char-count').textContent = len > 100 ? `${len} chars` : '';
-});
-
-function autoResize() {
-  msgInput.style.height = 'auto';
-  msgInput.style.height = Math.min(msgInput.scrollHeight, 180) + 'px';
+function openPanel(name) {
+  qsa('.slide-panel').forEach(p => p.classList.remove('open'));
+  qs(`#panel-${name}`)?.classList.add('open');
+  qs('#panel-backdrop').classList.add('show');
+  if (name==='knowledge') loadKB();
+  if (name==='settings')  loadSettings();
+  qsa('.foot-btn').forEach(b => b.classList.toggle('active', b.dataset.panel===name));
+}
+function closePanel(name) {
+  qs(`#panel-${name}`)?.classList.remove('open');
+  qs('#panel-backdrop').classList.remove('show');
+  qsa('.foot-btn').forEach(b => b.classList.remove('active'));
 }
 
-document.getElementById('send-btn').addEventListener('click', sendMessage);
-
-// ── Clear ──────────────────────────────────────────────────────────────────
-
-document.getElementById('clear-btn').addEventListener('click', () => {
-  ws.send(JSON.stringify({ type: 'clear' }));
-  clearChat();
-});
-
-// ── Settings ───────────────────────────────────────────────────────────────
-
-document.getElementById('settings-btn').addEventListener('click', openSettings);
-document.getElementById('settings-close').addEventListener('click', closeSettings);
-document.getElementById('settings-modal').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) closeSettings();
-});
-
-async function openSettings() {
-  try {
-    const res = await fetch(`${API}/api/config`);
-    const cfg = await res.json();
-    document.getElementById('cfg-name').value = cfg.ai_name || '';
-    document.getElementById('cfg-personality').value = cfg.ai_personality || '';
-    document.getElementById('cfg-model-path').value = cfg.model_path || '';
-    document.getElementById('cfg-n-ctx').value = cfg.n_ctx || 4096;
-    document.getElementById('cfg-gpu-layers').value = cfg.n_gpu_layers ?? 0;
-    document.getElementById('cfg-temperature').value = cfg.temperature ?? 0.7;
-    document.getElementById('cfg-workspace').value = cfg.workspace_path || '';
-    document.getElementById('cfg-enable-shell').checked = cfg.enable_shell !== false;
-    document.getElementById('cfg-shell-confirm').checked = cfg.shell_confirm_dangerous !== false;
-  } catch(e) {}
-  document.getElementById('settings-modal').classList.add('open');
-}
-
-function closeSettings() {
-  document.getElementById('settings-modal').classList.remove('open');
-}
-
-document.getElementById('settings-save').addEventListener('click', async () => {
-  const newCfg = {
-    ai_name: document.getElementById('cfg-name').value,
-    ai_personality: document.getElementById('cfg-personality').value,
-    model_path: document.getElementById('cfg-model-path').value,
-    n_ctx: parseInt(document.getElementById('cfg-n-ctx').value) || 4096,
-    n_gpu_layers: parseInt(document.getElementById('cfg-gpu-layers').value) ?? 0,
-    temperature: parseFloat(document.getElementById('cfg-temperature').value) || 0.7,
-    workspace_path: document.getElementById('cfg-workspace').value,
-    enable_shell: document.getElementById('cfg-enable-shell').checked,
-    shell_confirm_dangerous: document.getElementById('cfg-shell-confirm').checked,
-  };
-  try {
-    const res = await fetch(`${API}/api/config`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newCfg),
-    });
-    config = await res.json();
-    document.getElementById('ai-name-logo').textContent = config.ai_name || 'ARIA';
-    document.getElementById('ai-name-welcome').textContent = config.ai_name || 'ARIA';
-    document.title = `${config.ai_name || 'ARIA'} — Local AI`;
-    toast('Settings saved ✓', 'success');
-    closeSettings();
-  } catch(e) {
-    toast('Failed to save settings', 'error');
-  }
-});
-
-// ── Sidebar ────────────────────────────────────────────────────────────────
-
-document.getElementById('sidebar-toggle').addEventListener('click', () => {
-  document.getElementById('sidebar').classList.toggle('open');
-});
-
-document.querySelectorAll('.sidebar-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const name = tab.dataset.tab;
-    document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('visible'));
-    if (name === 'knowledge') {
-      document.getElementById('panel-knowledge').classList.add('visible');
-      refreshKB();
-    }
+qsa('.foot-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    const name = b.dataset.panel;
+    const panel = qs(`#panel-${name}`);
+    if (panel?.classList.contains('open')) closePanel(name);
+    else openPanel(name);
   });
 });
 
-// ── Init ───────────────────────────────────────────────────────────────────
+qsa('.panel-close').forEach(btn => {
+  btn.addEventListener('click', () => closePanel(btn.dataset.panel));
+});
+
+qs('#panel-backdrop').addEventListener('click', () => {
+  qsa('.slide-panel.open').forEach(p => closePanel(p.id.replace('panel-','')));
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+  try {
+    const r = await fetch(`${API}/api/config`);
+    const c = await r.json();
+    qs('#s-name').value       = c.ai_name || '';
+    qs('#s-personality').value = c.ai_personality || '';
+    qs('#s-model-path').value = c.model_path || '';
+    qs('#s-nctx').value       = c.n_ctx ?? 4096;
+    qs('#s-gpu').value        = c.n_gpu_layers ?? 0;
+    qs('#s-temp').value       = c.temperature ?? 0.7;
+    qs('#s-workspace').value  = c.workspace_path || '';
+    qs('#s-shell').checked    = c.enable_shell !== false;
+    qs('#s-guard').checked    = c.shell_confirm_dangerous !== false;
+  } catch(e) {}
+}
+
+qs('#save-settings').addEventListener('click', async () => {
+  const body = {
+    ai_name:               qs('#s-name').value,
+    ai_personality:        qs('#s-personality').value,
+    model_path:            qs('#s-model-path').value,
+    n_ctx:                 parseInt(qs('#s-nctx').value)||4096,
+    n_gpu_layers:          parseInt(qs('#s-gpu').value)??0,
+    temperature:           parseFloat(qs('#s-temp').value)||.7,
+    workspace_path:        qs('#s-workspace').value,
+    enable_shell:          qs('#s-shell').checked,
+    shell_confirm_dangerous: qs('#s-guard').checked,
+  };
+  try {
+    const r = await fetch(`${API}/api/config`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    config = await r.json();
+    qs('#brand-name').textContent = config.ai_name||'ARIA';
+    qs('#w-name').textContent     = config.ai_name||'ARIA';
+    document.title = config.ai_name||'ARIA';
+    toast('Settings saved ✓', 'ok');
+    closePanel('settings');
+  } catch(e) { toast('Failed to save', 'err'); }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 
 (async function init() {
   await loadStatus();
   connectWS();
-  refreshSessions();
+  loadSessions();
 })();

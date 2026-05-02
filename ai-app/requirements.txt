@@ -1,22 +1,11 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-httpx>=0.27.0
 aiofiles>=23.2.1
 python-multipart>=0.0.9
 websockets>=12.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
-Pillow>=10.0.0
+Pillow>=10.3.0
 numpy>=1.26.0
-python-dotenv>=1.0.0
 chardet>=5.2.0
-
-# Local model inference — the core engine
-# CPU-only (works on any machine):
-llama-cpp-python>=0.2.90
-
-# ── GPU acceleration (optional) ────────────────────────────────────────────
-# If you have an NVIDIA GPU, uninstall the above and install this instead:
-#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
-# For AMD GPU on Windows (ROCm):
-#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/rocm
+pywebview>=5.0.5

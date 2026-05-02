@@ -2,209 +2,241 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ARIA — Local AI</title>
-<link rel="stylesheet" href="/static/css/main.css">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARIA</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
 
-<canvas id="bg-canvas"></canvas>
+<!-- Animated background -->
+<div id="bg">
+  <canvas id="net-canvas"></canvas>
+  <div class="aurora"></div>
+</div>
 
 <div id="app">
 
-  <!-- ── Sidebar ───────────────────────────────────────────────── -->
-  <aside id="sidebar">
-    <div id="sidebar-header">
-      <div class="logo">
-        <div class="logo-orb">✦</div>
-        <div class="logo-text"><span id="ai-name-logo">ARIA</span></div>
-      </div>
-      <div id="status-badge">
-        <div class="status-dot" id="status-dot"></div>
-        <span id="status-text">Connecting...</span>
-      </div>
-      <button id="new-chat-btn">＋ New Chat</button>
-    </div>
+  <!-- ════ SIDEBAR ════════════════════════════════════════════════ -->
+  <aside id="sidebar" class="open">
 
-    <div id="sessions-list"></div>
+    <div class="sidebar-top">
+      <div class="brand">
+        <div class="brand-orb"><span>✦</span></div>
+        <div class="brand-name" id="brand-name">ARIA</div>
+        <button class="icon-btn" id="collapse-btn" title="Toggle sidebar">◀</button>
+      </div>
 
-    <div id="sidebar-tabs">
-      <button class="sidebar-tab active" data-tab="history">
-        <span class="tab-icon">💬</span>History
-      </button>
-      <button class="sidebar-tab" data-tab="knowledge">
-        <span class="tab-icon">🧠</span>Knowledge
+      <div id="status-row">
+        <span class="status-pip" id="status-pip"></span>
+        <span class="status-label" id="status-label">Starting…</span>
+      </div>
+
+      <button id="new-chat-btn" class="new-chat-btn">
+        <span class="btn-icon">✦</span>
+        <span class="btn-text">New Chat</span>
       </button>
     </div>
 
-    <div class="sidebar-panel" id="panel-knowledge">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px">Documents</div>
-        <label for="kb-file-input" style="font-size:10px;color:var(--accent2);cursor:pointer;">+ Add file</label>
-        <input type="file" id="kb-file-input" multiple style="display:none">
-      </div>
-      <div id="kb-docs-list"></div>
+    <!-- Session search -->
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input id="session-search" type="text" placeholder="Search chats…" autocomplete="off">
     </div>
+
+    <!-- Sessions -->
+    <div id="sessions-scroll">
+      <div class="list-label">Recent</div>
+      <div id="sessions-list"></div>
+    </div>
+
+    <!-- Sidebar tabs -->
+    <div class="sidebar-footer">
+      <button class="foot-btn active" data-panel="history" title="Chat history">💬</button>
+      <button class="foot-btn" data-panel="knowledge" title="Knowledge base">🧠</button>
+      <button class="foot-btn" data-panel="settings" title="Settings">⚙</button>
+    </div>
+
   </aside>
 
-  <!-- ── Main ──────────────────────────────────────────────────── -->
+  <!-- ════ MAIN ════════════════════════════════════════════════════ -->
   <main id="main">
 
     <!-- Topbar -->
     <div id="topbar">
-      <div id="topbar-left">
-        <button class="topbar-btn" id="sidebar-toggle" title="Toggle sidebar">☰</button>
-        <select id="model-select" title="Select AI model"></select>
+      <div class="top-left">
+        <button class="icon-btn" id="sidebar-toggle">☰</button>
+        <div id="model-pill">
+          <span class="model-dot"></span>
+          <select id="model-select"></select>
+        </div>
       </div>
-      <div id="topbar-title" id="topbar-title">Local AI · Powered by Ollama</div>
-      <div id="topbar-right">
-        <button class="topbar-btn" id="clear-btn" title="Clear conversation">🗑 Clear</button>
-        <button class="topbar-btn" id="settings-btn" title="Settings">⚙ Settings</button>
+      <div id="chat-title">Local AI · Standalone</div>
+      <div class="top-right">
+        <button class="ghost-btn" id="clear-btn">🗑 Clear</button>
       </div>
     </div>
 
     <!-- Chat -->
-    <div id="chat">
-      <div id="chat-inner">
+    <div id="chat-wrap">
+      <div id="chat-scroll">
+        <div id="chat-inner">
 
-        <!-- Welcome -->
-        <div id="welcome">
-          <div class="welcome-orb">✦</div>
-          <div class="welcome-title">Hello, I'm <span id="ai-name-welcome">ARIA</span></div>
-          <div class="welcome-sub">Your personal AI running locally on your machine. I can browse the web, manage files, write code, open apps, and more.</div>
-          <div class="suggestions">
-            <button class="suggestion-chip" onclick="sendSuggestion(this)">
-              <span class="icon">🔍</span>Search the web for the latest AI news
-            </button>
-            <button class="suggestion-chip" onclick="sendSuggestion(this)">
-              <span class="icon">📁</span>Show me the files in my home directory
-            </button>
-            <button class="suggestion-chip" onclick="sendSuggestion(this)">
-              <span class="icon">💻</span>Write me a Python script that sorts files by type
-            </button>
-            <button class="suggestion-chip" onclick="sendSuggestion(this)">
-              <span class="icon">🖥</span>What are my system specs right now?
-            </button>
+          <!-- Welcome -->
+          <div id="welcome">
+            <div class="welcome-orb">
+              <div class="orb-ring"></div>
+              <div class="orb-ring r2"></div>
+              <span class="orb-icon">✦</span>
+            </div>
+            <h1 class="welcome-title">Hi, I'm <span id="w-name">ARIA</span></h1>
+            <p class="welcome-sub">Your personal AI running entirely on your machine.<br>No internet required. No data leaves your PC.</p>
+            <div class="chips">
+              <button class="chip" onclick="suggest(this)"><span>🌐</span>Search the web for today's AI news</button>
+              <button class="chip" onclick="suggest(this)"><span>📁</span>List the files on my Desktop</button>
+              <button class="chip" onclick="suggest(this)"><span>💻</span>Write me a Python file organizer script</button>
+              <button class="chip" onclick="suggest(this)"><span>🖥</span>Tell me my full system specs</button>
+              <button class="chip" onclick="suggest(this)"><span>🧠</span>What do you know about me so far?</button>
+              <button class="chip" onclick="suggest(this)"><span>⚡</span>Open VS Code for me</button>
+            </div>
           </div>
+
+        </div><!-- /chat-inner -->
+      </div><!-- /chat-scroll -->
+
+      <!-- Typing indicator inside chat -->
+      <div id="typing-wrap" class="hidden">
+        <div class="t-avatar">✦</div>
+        <div class="t-body">
+          <div class="t-dots"><span></span><span></span><span></span></div>
+          <div class="t-label" id="t-label"></div>
         </div>
-
-        <!-- Messages injected here by JS -->
-
-      </div><!-- /chat-inner -->
-
-      <!-- Typing indicator (outside chat-inner so it stays at bottom) -->
-      <div id="typing-indicator">
-        <div class="typing-avatar">✦</div>
-        <div class="typing-dots">
-          <div class="dot"></div>
-          <div class="dot"></div>
-          <div class="dot"></div>
-        </div>
-        <div id="typing-label" style="font-size:12px;color:var(--text-muted);margin-left:4px;"></div>
       </div>
-    </div>
+
+    </div><!-- /chat-wrap -->
 
     <!-- Input -->
     <div id="input-area">
-      <div id="input-inner">
-        <div id="attachments-bar"></div>
-        <div id="input-box">
-          <div class="left-btns">
-            <label for="file-input" class="input-icon-btn" title="Attach file">📎</label>
-            <input type="file" id="file-input" multiple>
-          </div>
-          <textarea id="msg-input" rows="1" placeholder="Ask me anything..."></textarea>
-          <div class="right-btns">
-            <button id="send-btn" title="Send">➤</button>
-          </div>
+      <div id="input-card">
+
+        <div id="attach-strip" class="hidden"></div>
+
+        <div id="input-row">
+          <label class="icon-btn" for="file-input" title="Attach file">📎</label>
+          <input type="file" id="file-input" multiple>
+
+          <textarea id="msg-input" rows="1" placeholder="Message ARIA…" spellcheck="true"></textarea>
+
+          <button id="send-btn" title="Send (Enter)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
         </div>
+
         <div id="input-meta">
-          <span>Enter to send &nbsp;·&nbsp; Shift+Enter for newline</span>
-          <span id="char-count" style="margin-left:auto"></span>
+          <span>Enter ↵ to send &nbsp;·&nbsp; Shift+Enter for newline</span>
+          <span id="model-info-meta"></span>
         </div>
       </div>
     </div>
 
-  </main>
+  </main><!-- /main -->
+
+  <!-- ════ SLIDE-OUT PANELS ═════════════════════════════════════ -->
+
+  <!-- Knowledge panel -->
+  <div class="slide-panel" id="panel-knowledge">
+    <div class="panel-head">
+      <span>🧠 Knowledge Base</span>
+      <button class="panel-close" data-panel="knowledge">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="panel-row">
+        <label for="kb-file-input" class="ghost-btn small">+ Add files</label>
+        <input type="file" id="kb-file-input" multiple style="display:none">
+      </div>
+      <div id="kb-docs"></div>
+    </div>
+  </div>
+
+  <!-- Settings panel -->
+  <div class="slide-panel" id="panel-settings">
+    <div class="panel-head">
+      <span>⚙ Settings</span>
+      <button class="panel-close" data-panel="settings">✕</button>
+    </div>
+    <div class="panel-body">
+
+      <div class="setting-group">
+        <div class="setting-label">AI Name</div>
+        <input class="setting-input" id="s-name" type="text" placeholder="ARIA">
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">Personality</div>
+        <textarea class="setting-input" id="s-personality" rows="5"></textarea>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">Model File Path</div>
+        <input class="setting-input" id="s-model-path" type="text" placeholder="models/model.gguf">
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-group half">
+          <div class="setting-label">Context Length</div>
+          <input class="setting-input" id="s-nctx" type="number" placeholder="4096">
+        </div>
+        <div class="setting-group half">
+          <div class="setting-label">GPU Layers (0=CPU)</div>
+          <input class="setting-input" id="s-gpu" type="number" placeholder="0">
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-group half">
+          <div class="setting-label">Temperature</div>
+          <input class="setting-input" id="s-temp" type="number" step="0.1" placeholder="0.7">
+        </div>
+        <div class="setting-group half">
+          <div class="setting-label">Workspace Path</div>
+          <input class="setting-input" id="s-workspace" type="text" placeholder="~/Desktop">
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label class="toggle-row">
+          <input type="checkbox" id="s-shell"> Enable shell commands
+        </label>
+        <label class="toggle-row" style="margin-top:6px">
+          <input type="checkbox" id="s-guard"> Block dangerous commands
+        </label>
+      </div>
+
+      <button class="save-btn" id="save-settings">Save &amp; Apply</button>
+
+    </div>
+  </div>
+
+  <!-- Panel backdrop -->
+  <div id="panel-backdrop"></div>
+
 </div><!-- /app -->
 
 <!-- Drop overlay -->
 <div id="drop-overlay">
   <div class="drop-msg">
-    <div style="font-size:48px;margin-bottom:12px;">📂</div>
-    <div>Drop files to add to knowledge base</div>
-    <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">Documents, code, text files, PDFs</div>
+    <div style="font-size:52px;margin-bottom:16px">📂</div>
+    <div style="font-size:20px;font-weight:600">Drop files to add to knowledge base</div>
+    <div style="font-size:13px;margin-top:8px;opacity:.6">Text, code, PDF, markdown…</div>
   </div>
 </div>
 
-<!-- Settings modal -->
-<div id="settings-modal">
-  <div id="settings-panel">
-    <div class="settings-title">
-      ⚙ Settings
-      <button class="settings-close" id="settings-close">✕</button>
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-label">AI Identity</div>
-      <div class="settings-row">
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Name</div>
-          <input type="text" id="cfg-name" class="settings-input" placeholder="ARIA">
-        </div>
-      </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;margin-top:8px;">Personality / System Prompt</div>
-      <textarea id="cfg-personality" class="settings-textarea" rows="5"></textarea>
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-label">Model</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Model file path (relative to ai-app/ or absolute)</div>
-      <input type="text" id="cfg-model-path" class="settings-input" placeholder="models/Llama-3.2-3B-Instruct-Q4_K_M.gguf">
-      <div style="margin-top:10px;display:flex;gap:10px;">
-        <div style="flex:1">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Context length (n_ctx)</div>
-          <input type="number" id="cfg-n-ctx" class="settings-input" placeholder="4096" min="512" max="32768">
-        </div>
-        <div style="flex:1">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">GPU layers (0=CPU, -1=all)</div>
-          <input type="number" id="cfg-gpu-layers" class="settings-input" placeholder="0" min="-1">
-        </div>
-        <div style="flex:1">
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Temperature</div>
-          <input type="number" id="cfg-temperature" class="settings-input" placeholder="0.7" min="0" max="2" step="0.1">
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-label">File Access</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Workspace Path</div>
-      <input type="text" id="cfg-workspace" class="settings-input" placeholder="~/Desktop">
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-label">Shell Execution</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
-          <input type="checkbox" id="cfg-enable-shell"> Enable shell commands
-        </label>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
-          <input type="checkbox" id="cfg-shell-confirm"> Block dangerous commands
-        </label>
-      </div>
-    </div>
-
-    <button class="settings-save" id="settings-save">Save Settings</button>
-  </div>
-</div>
-
-<!-- Toast container -->
-<div id="toast-container"></div>
+<!-- Toasts -->
+<div id="toasts"></div>
 
 <script src="/static/js/app.js"></script>
 </body>

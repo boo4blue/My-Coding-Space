@@ -1,69 +1,49 @@
 @echo off
 setlocal EnableDelayedExpansion
-
-set SCRIPT_DIR=%~dp0
-cd /d "%SCRIPT_DIR%"
+cd /d "%~dp0"
 
 echo.
-echo ============================================
-echo   ARIA -- Standalone Local AI
-echo ============================================
+echo   ARIA -- Starting...
 echo.
 
-:: ── Python check ───────────────────────────────────────────────────────────
+:: ── Python ──────────────────────────────────────────────────────────────────
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: Python not found.
-    echo Download it from https://python.org  (check "Add to PATH" during install^)
-    pause
-    exit /b 1
+    echo ERROR: Python not found. Run install.bat first.
+    pause & exit /b 1
 )
-for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo [OK] %%v
 
-:: ── Virtual environment ────────────────────────────────────────────────────
-if not exist ".venv" (
-    echo [--] Creating virtual environment...
-    python -m venv .venv
+:: ── Venv ─────────────────────────────────────────────────────────────────────
+if not exist ".venv\Scripts\activate.bat" (
+    echo [--] No virtual environment found. Running setup...
+    call install.bat
+    exit /b
 )
 call .venv\Scripts\activate.bat
 
-:: ── Install / upgrade deps ─────────────────────────────────────────────────
-echo [--] Checking dependencies...
-pip install -q -r requirements.txt
-echo [OK] Dependencies ready
-
-:: ── Check model exists ─────────────────────────────────────────────────────
-for /f %%c in ('python -c "import json,pathlib; cfg=json.load(open('config.json')); p=pathlib.Path(cfg.get('model_path','')).expanduser(); print('yes' if p.exists() else 'no')" 2^>nul') do set MODEL_OK=%%c
-
-if "%MODEL_OK%"=="no" (
-    echo.
-    echo [!!] No model file found.
-    echo      Run: python download_model.py
-    echo      to download a model, then try again.
-    echo.
-    set /p DOWNLOAD="Download a model now? [Y/n]: "
-    if /i not "%DOWNLOAD%"=="n" (
-        python download_model.py
-    ) else (
-        pause
-        exit /b 1
-    )
+:: ── Quick dep check ──────────────────────────────────────────────────────────
+python -c "import fastapi, uvicorn, llama_cpp" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [--] Missing dependencies. Installing...
+    pip install -q -r requirements.txt
+    pip install llama-cpp-python --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu -q
 )
 
-:: ── Data directories ───────────────────────────────────────────────────────
-if not exist "models"           mkdir models
-if not exist "data\knowledge"   mkdir data\knowledge
-if not exist "data\uploads"     mkdir data\uploads
-if not exist "data\sessions"    mkdir data\sessions
+:: ── Check model ───────────────────────────────────────────────────────────────
+python -c "import json,pathlib; cfg=json.load(open('config.json')); p=pathlib.Path(cfg.get('model_path','')); exit(0 if p.exists() else 1)" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo [!!] No model file found.
+    set /p DL="Download one now? [Y/n]: "
+    if /i not "!DL!"=="n" python download_model.py
+)
 
-:: ── Get port ───────────────────────────────────────────────────────────────
-for /f %%p in ('python -c "import json; print(json.load(open('config.json')).get('port', 7860))" 2^>nul') do set PORT=%%p
-if "%PORT%"=="" set PORT=7860
+:: ── Data dirs ─────────────────────────────────────────────────────────────────
+if not exist "models"         mkdir models
+if not exist "data\knowledge" mkdir data\knowledge
+if not exist "data\uploads"   mkdir data\uploads
+if not exist "data\sessions"  mkdir data\sessions
 
-echo.
-echo [--] Starting ARIA on http://localhost:%PORT%
-echo      Model loads on first message (may take 10-30s the first time^)
-echo      Press Ctrl+C to stop
-echo.
-
-python app.py
+:: ── Launch ────────────────────────────────────────────────────────────────────
+echo [--] Launching ARIA window...
+python launcher.py
