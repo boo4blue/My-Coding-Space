@@ -160,15 +160,21 @@
     </div>
 
     <div class="settings-section">
-      <div class="settings-label">Ollama</div>
-      <div class="settings-row">
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">URL</div>
-          <input type="text" id="cfg-ollama-url" class="settings-input" placeholder="http://localhost:11434">
+      <div class="settings-label">Model</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Model file path (relative to ai-app/ or absolute)</div>
+      <input type="text" id="cfg-model-path" class="settings-input" placeholder="models/Llama-3.2-3B-Instruct-Q4_K_M.gguf">
+      <div style="margin-top:10px;display:flex;gap:10px;">
+        <div style="flex:1">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Context length (n_ctx)</div>
+          <input type="number" id="cfg-n-ctx" class="settings-input" placeholder="4096" min="512" max="32768">
         </div>
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Default Model</div>
-          <input type="text" id="cfg-default-model" class="settings-input" placeholder="llama3.2">
+        <div style="flex:1">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">GPU layers (0=CPU, -1=all)</div>
+          <input type="number" id="cfg-gpu-layers" class="settings-input" placeholder="0" min="-1">
+        </div>
+        <div style="flex:1">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Temperature</div>
+          <input type="number" id="cfg-temperature" class="settings-input" placeholder="0.7" min="0" max="2" step="0.1">
         </div>
       </div>
     </div>

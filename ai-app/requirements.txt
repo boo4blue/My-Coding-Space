@@ -8,6 +8,15 @@ beautifulsoup4>=4.12.0
 requests>=2.31.0
 Pillow>=10.0.0
 numpy>=1.26.0
-pathlib2>=2.3.7
 python-dotenv>=1.0.0
 chardet>=5.2.0
+
+# Local model inference — the core engine
+# CPU-only (works on any machine):
+llama-cpp-python>=0.2.90
+
+# ── GPU acceleration (optional) ────────────────────────────────────────────
+# If you have an NVIDIA GPU, uninstall the above and install this instead:
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+# For AMD GPU on Windows (ROCm):
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/rocm

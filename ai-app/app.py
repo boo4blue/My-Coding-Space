@@ -3,7 +3,6 @@ import json
 import os
 import re
 import sys
-import shutil
 import webbrowser
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from engine.ollama_client import OllamaClient
+from engine.local_model import LocalModel
 from engine.tools import ToolEngine
 from engine.knowledge import KnowledgeBase
 from engine.memory import ConversationMemory
@@ -39,29 +38,27 @@ def save_config(cfg: dict):
 
 
 CONFIG = load_config()
-DATA_DIR = ROOT / "data"
-UPLOADS_DIR = DATA_DIR / "uploads"
+DATA_DIR   = ROOT / "data"
+UPLOADS_DIR  = DATA_DIR / "uploads"
 SESSIONS_DIR = DATA_DIR / "sessions"
 KNOWLEDGE_DIR = DATA_DIR / "knowledge"
+MODELS_DIR = ROOT / "models"
 
-for d in [UPLOADS_DIR, SESSIONS_DIR, KNOWLEDGE_DIR]:
+for d in [UPLOADS_DIR, SESSIONS_DIR, KNOWLEDGE_DIR, MODELS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # ── Singletons ────────────────────────────────────────────────────────────────
 
-ollama = OllamaClient(CONFIG.get("ollama_url", "http://localhost:11434"))
-kb = KnowledgeBase(str(KNOWLEDGE_DIR))
-memory = ConversationMemory(str(SESSIONS_DIR), CONFIG.get("max_history", 50))
-tools = ToolEngine(CONFIG, kb)
+model   = LocalModel(CONFIG)
+kb      = KnowledgeBase(str(KNOWLEDGE_DIR))
+memory  = ConversationMemory(str(SESSIONS_DIR), CONFIG.get("max_history", 50))
+tools   = ToolEngine(CONFIG, kb)
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="ARIA — Local AI")
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
@@ -73,14 +70,24 @@ async def root():
 
 @app.get("/api/status")
 async def status():
-    alive = await ollama.is_running()
-    models = await ollama.list_models() if alive else []
+    m_status = model.status()
+    # List gguf files in models dir so user can switch
+    model_files = [f.name for f in MODELS_DIR.glob("*.gguf")]
     return {
-        "ollama": alive,
-        "models": models,
-        "current_model": CONFIG.get("default_model", "llama3.2"),
-        "ai_name": CONFIG.get("ai_name", "ARIA"),
+        "ready":       m_status["loaded"],
+        "model_exists": m_status["model_exists"],
+        "model_name":  m_status["model_name"],
+        "model_path":  m_status["model_path"],
+        "model_files": model_files,
+        "error":       m_status["error"],
+        "ai_name":     CONFIG.get("ai_name", "ARIA"),
     }
+
+
+@app.post("/api/load_model")
+async def load_model_endpoint():
+    ok = await asyncio.to_thread(model.load)
+    return {"ok": ok, "error": model._load_error or None}
 
 
 @app.get("/api/sessions")
@@ -125,13 +132,10 @@ async def upload_file(file: UploadFile = File(...), add_to_kb: str = Form("false
     async with aiofiles.open(dest, "wb") as f:
         content = await file.read()
         await f.write(content)
-
     result: dict = {"filename": file.filename, "path": str(dest)}
-
     if add_to_kb.lower() == "true":
         kb_result = kb.add_file(str(dest))
         result["knowledge"] = kb_result
-
     return result
 
 
@@ -144,8 +148,13 @@ async def get_config():
 async def update_config(data: dict):
     CONFIG.update(data)
     save_config(CONFIG)
-    # Reload memory max_history
     memory.max_history = CONFIG.get("max_history", 50)
+    # Reload model if path changed
+    new_path = Path(CONFIG.get("model_path", "")).expanduser()
+    if new_path != model.model_path:
+        model.model_path = new_path
+        model._llm = None
+        model._load_error = ""
     return CONFIG
 
 
@@ -155,32 +164,34 @@ TOOL_CALL_RE = re.compile(r"TOOL_CALL:\s*(\{.*?\})", re.DOTALL)
 
 
 def build_system_prompt() -> str:
-    name = CONFIG.get("ai_name", "ARIA")
+    name        = CONFIG.get("ai_name", "ARIA")
     personality = CONFIG.get("ai_personality", "You are a helpful AI assistant.")
-    tool_docs = tools.get_tool_descriptions()
+    tool_docs   = tools.get_tool_descriptions()
 
     kb_docs = kb.list_documents()
     kb_note = ""
     if kb_docs:
         sources = ", ".join(d["source"] for d in kb_docs[:10])
-        kb_note = f"\n\nYou have a knowledge base with these documents: {sources}. Use search_knowledge_base to look things up from them."
+        kb_note = (
+            f"\n\nYou have a knowledge base with these documents: {sources}. "
+            "Use search_knowledge_base to look things up from them."
+        )
 
-    return f"""{personality}
+    return (
+        f"{personality}\n\nYour name is {name}. "
+        "You are running locally on the user's PC — completely standalone, no internet required for thinking.\n\n"
+        f"{tool_docs}{kb_note}\n\n"
+        "Respond naturally and helpfully. Use tools proactively when needed."
+    )
 
-Your name is {name}. You are running locally on the user's PC.
 
-{tool_docs}{kb_note}
-
-Respond naturally and helpfully. When you need information or need to take action, use the tools. Be proactive — if the user asks you to find something, search for it. If they ask you to open something, open it. If they ask you to write code, write it and save it to a file."""
-
-
-async def process_with_tools(ws: WebSocket, user_message: str, model: str):
+async def process_with_tools(ws: WebSocket, user_message: str):
     history = memory.get_history()
     history.append({"role": "user", "content": user_message})
     system = build_system_prompt()
 
     full_response = ""
-    iteration = 0
+    iteration     = 0
     max_iterations = 8
 
     while iteration < max_iterations:
@@ -188,25 +199,20 @@ async def process_with_tools(ws: WebSocket, user_message: str, model: str):
         buffer = ""
         tool_calls_made = []
 
-        # Stream from Ollama
         await ws.send_json({"type": "start"})
 
-        async for chunk in ollama.chat_stream(history, model, system):
+        async for chunk in model.chat_stream(history, system):
             buffer += chunk
             full_response += chunk
 
-            # Check for tool call marker in buffer
             if "TOOL_CALL:" in buffer:
-                # Send text up to the TOOL_CALL
                 pre = buffer[: buffer.index("TOOL_CALL:")]
                 if pre:
                     await ws.send_json({"type": "chunk", "text": pre})
 
-                # Wait for complete JSON — check if we have a complete object
-                rest = buffer[buffer.index("TOOL_CALL:"):]
+                rest  = buffer[buffer.index("TOOL_CALL:"):]
                 match = TOOL_CALL_RE.search(rest)
                 if match:
-                    # Send tool_call notification
                     try:
                         call_data = json.loads(match.group(1))
                         tool_name = call_data.get("name", "")
@@ -219,37 +225,24 @@ async def process_with_tools(ws: WebSocket, user_message: str, model: str):
                         tool_calls_made.append((tool_name, tool_args))
                     except json.JSONDecodeError:
                         pass
-                    # Clear buffer after the match
                     buffer = rest[match.end():]
-                # If no complete JSON yet, keep accumulating
                 continue
 
-            # Send non-tool text chunks in real time
-            # Only send if we don't have a partial TOOL_CALL in buffer
             if "TOOL_CALL:" not in buffer:
                 await ws.send_json({"type": "chunk", "text": chunk})
                 buffer = ""
 
-        # Send any remaining buffer text
         if buffer and "TOOL_CALL:" not in buffer:
             await ws.send_json({"type": "chunk", "text": buffer})
 
-        # Execute tool calls if any
         if tool_calls_made:
             tool_results = []
             for name, args in tool_calls_made:
                 await ws.send_json({"type": "tool_running", "name": name})
                 result = await tools.call(name, args)
-                await ws.send_json({
-                    "type": "tool_result",
-                    "name": name,
-                    "result": result[:2000],
-                })
-                tool_results.append(
-                    f"TOOL_RESULT ({name}): {result[:3000]}"
-                )
+                await ws.send_json({"type": "tool_result", "name": name, "result": result[:2000]})
+                tool_results.append(f"TOOL_RESULT ({name}): {result[:3000]}")
 
-            # Inject tool results and continue
             history.append({"role": "assistant", "content": full_response})
             history.append({
                 "role": "user",
@@ -257,10 +250,8 @@ async def process_with_tools(ws: WebSocket, user_message: str, model: str):
             })
             full_response = ""
         else:
-            # No tool calls — done
             break
 
-    # Save final exchange to memory
     memory.add("user", user_message)
     memory.add("assistant", full_response)
     await ws.send_json({"type": "done", "full": full_response})
@@ -269,6 +260,10 @@ async def process_with_tools(ws: WebSocket, user_message: str, model: str):
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
+    # Pre-load the model in the background when a client connects
+    if not model.is_loaded() and model.model_exists():
+        asyncio.create_task(asyncio.to_thread(model.load))
+
     try:
         while True:
             raw = await ws.receive_text()
@@ -281,19 +276,28 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "chat":
                 user_text = msg.get("text", "").strip()
-                model = msg.get("model", CONFIG.get("default_model", "llama3.2"))
                 if not user_text:
                     continue
 
-                alive = await ollama.is_running()
-                if not alive:
+                if not model.model_exists():
                     await ws.send_json({
                         "type": "error",
-                        "text": "Ollama is not running. Start it with: ollama serve",
+                        "text": (
+                            "No model file found. "
+                            "Run: python download_model.py  to download one, "
+                            f"then place the .gguf file in: {MODELS_DIR}"
+                        ),
                     })
                     continue
 
-                await process_with_tools(ws, user_text, model)
+                if not model.is_loaded():
+                    await ws.send_json({"type": "status", "text": "Loading model into memory… (first message takes 5–30s)"})
+                    ok = await asyncio.to_thread(model.load)
+                    if not ok:
+                        await ws.send_json({"type": "error", "text": f"Failed to load model: {model._load_error}"})
+                        continue
+
+                await process_with_tools(ws, user_text)
 
             elif msg_type == "new_session":
                 sid = memory.new_session()
@@ -301,12 +305,11 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "load_session":
                 sid = msg.get("session_id", "")
-                ok = memory.load_session(sid)
-                history = memory.get_history() if ok else []
+                ok  = memory.load_session(sid)
                 await ws.send_json({
                     "type": "session_loaded",
                     "session_id": sid,
-                    "messages": history,
+                    "messages": memory.get_history() if ok else [],
                     "ok": ok,
                 })
 
@@ -331,14 +334,13 @@ async def websocket_endpoint(ws: WebSocket):
 if __name__ == "__main__":
     port = CONFIG.get("port", 7860)
     print(f"\n{'='*50}")
-    print(f"  ARIA — Local AI")
+    print(f"  ARIA — Standalone Local AI")
     print(f"  http://localhost:{port}")
     print(f"{'='*50}\n")
     if CONFIG.get("auto_open_browser", True):
-        import threading
-        def _open():
-            import time
-            time.sleep(1.5)
-            webbrowser.open(f"http://localhost:{port}")
-        threading.Thread(target=_open, daemon=True).start()
+        import threading, time
+        threading.Thread(
+            target=lambda: (time.sleep(1.5), webbrowser.open(f"http://localhost:{port}")),
+            daemon=True,
+        ).start()
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False, log_level="warning")

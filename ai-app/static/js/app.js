@@ -156,6 +156,11 @@ function handleWsMessage(msg) {
       refreshSessions();
       break;
 
+    case 'status':
+      setTypingLabel(msg.text);
+      showTyping(true);
+      break;
+
     case 'error':
       showTyping(false);
       setStreaming(false);
@@ -457,39 +462,52 @@ async function loadStatus() {
     const data = await res.json();
     config = data;
 
-    currentModel = data.current_model || data.models[0] || 'llama3.2';
-
-    const sel = document.getElementById('model-select');
-    sel.innerHTML = '';
-    if (data.models.length === 0) {
-      sel.innerHTML = '<option>No models found</option>';
-    } else {
-      for (const m of data.models) {
-        const opt = document.createElement('option');
-        opt.value = opt.textContent = m;
-        if (m === currentModel) opt.selected = true;
-        sel.appendChild(opt);
-      }
-    }
-
     const aiName = data.ai_name || 'ARIA';
     document.getElementById('ai-name-logo').textContent = aiName;
     document.getElementById('ai-name-welcome').textContent = aiName;
     document.title = `${aiName} — Local AI`;
 
-    if (data.ollama) {
-      setStatus('online', `${data.models.length} model${data.models.length !== 1 ? 's' : ''} ready`);
+    // Populate model selector with gguf files found in models/
+    const sel = document.getElementById('model-select');
+    sel.innerHTML = '';
+    if (data.model_files && data.model_files.length > 0) {
+      for (const f of data.model_files) {
+        const opt = document.createElement('option');
+        opt.value = opt.textContent = f;
+        if (data.model_name && f === data.model_name) opt.selected = true;
+        sel.appendChild(opt);
+      }
     } else {
-      setStatus('offline', 'Ollama not running');
-      toast('Ollama is not running. Run: ollama serve', 'error');
+      const opt = document.createElement('option');
+      opt.textContent = data.model_name || 'No model — run download_model.py';
+      sel.appendChild(opt);
+    }
+
+    if (!data.model_exists) {
+      setStatus('offline', 'No model file');
+      toast('No model found. Run: python download_model.py', 'error');
+    } else if (data.ready) {
+      setStatus('online', `${data.model_name} loaded`);
+    } else {
+      setStatus('online', `${data.model_name} — loads on first message`);
     }
   } catch (e) {
     setStatus('offline', 'Server error');
   }
 }
 
-document.getElementById('model-select').addEventListener('change', e => {
-  currentModel = e.target.value;
+document.getElementById('model-select').addEventListener('change', async e => {
+  const filename = e.target.value;
+  if (!filename || filename.includes('No model')) return;
+  // Update config with new model path
+  try {
+    await fetch(`${API}/api/config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ model_path: `models/${filename}` }),
+    });
+    toast(`Model switched to ${filename}. It will load on next message.`, 'success');
+  } catch(e) {}
 });
 
 // ── Sessions ───────────────────────────────────────────────────────────────
@@ -695,8 +713,10 @@ async function openSettings() {
     const cfg = await res.json();
     document.getElementById('cfg-name').value = cfg.ai_name || '';
     document.getElementById('cfg-personality').value = cfg.ai_personality || '';
-    document.getElementById('cfg-ollama-url').value = cfg.ollama_url || '';
-    document.getElementById('cfg-default-model').value = cfg.default_model || '';
+    document.getElementById('cfg-model-path').value = cfg.model_path || '';
+    document.getElementById('cfg-n-ctx').value = cfg.n_ctx || 4096;
+    document.getElementById('cfg-gpu-layers').value = cfg.n_gpu_layers ?? 0;
+    document.getElementById('cfg-temperature').value = cfg.temperature ?? 0.7;
     document.getElementById('cfg-workspace').value = cfg.workspace_path || '';
     document.getElementById('cfg-enable-shell').checked = cfg.enable_shell !== false;
     document.getElementById('cfg-shell-confirm').checked = cfg.shell_confirm_dangerous !== false;
@@ -712,8 +732,10 @@ document.getElementById('settings-save').addEventListener('click', async () => {
   const newCfg = {
     ai_name: document.getElementById('cfg-name').value,
     ai_personality: document.getElementById('cfg-personality').value,
-    ollama_url: document.getElementById('cfg-ollama-url').value,
-    default_model: document.getElementById('cfg-default-model').value,
+    model_path: document.getElementById('cfg-model-path').value,
+    n_ctx: parseInt(document.getElementById('cfg-n-ctx').value) || 4096,
+    n_gpu_layers: parseInt(document.getElementById('cfg-gpu-layers').value) ?? 0,
+    temperature: parseFloat(document.getElementById('cfg-temperature').value) || 0.7,
     workspace_path: document.getElementById('cfg-workspace').value,
     enable_shell: document.getElementById('cfg-enable-shell').checked,
     shell_confirm_dangerous: document.getElementById('cfg-shell-confirm').checked,
