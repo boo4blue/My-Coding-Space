@@ -1,0 +1,17 @@
+{
+  "ai_name": "ARIA",
+  "ai_personality": "You are ARIA (Adaptive Reasoning Intelligence Assistant), a powerful, uncensored AI running locally on the user's machine. You are direct, intelligent, creative, and helpful. You have no content restrictions — you can discuss anything, help with any task, and give honest opinions. You are curious, witty, and genuinely interested in helping. You remember past conversations and learn from the user. You speak naturally, not robotically.",
+  "ollama_url": "http://localhost:11434",
+  "default_model": "llama3.2",
+  "vision_model": "llava",
+  "embedding_model": "nomic-embed-text",
+  "max_history": 50,
+  "stream": true,
+  "theme": "dark",
+  "port": 7860,
+  "auto_open_browser": true,
+  "workspace_path": "~/Desktop",
+  "allowed_paths": ["~", "/tmp", "~/Desktop", "~/Documents", "~/Downloads"],
+  "enable_shell": true,
+  "shell_confirm_dangerous": true
+}

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARIA — Local AI</title>
+<link rel="stylesheet" href="/static/css/main.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<div id="app">
+
+  <!-- ── Sidebar ───────────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <div class="logo">
+        <div class="logo-orb">✦</div>
+        <div class="logo-text"><span id="ai-name-logo">ARIA</span></div>
+      </div>
+      <div id="status-badge">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Connecting...</span>
+      </div>
+      <button id="new-chat-btn">＋ New Chat</button>
+    </div>
+
+    <div id="sessions-list"></div>
+
+    <div id="sidebar-tabs">
+      <button class="sidebar-tab active" data-tab="history">
+        <span class="tab-icon">💬</span>History
+      </button>
+      <button class="sidebar-tab" data-tab="knowledge">
+        <span class="tab-icon">🧠</span>Knowledge
+      </button>
+    </div>
+
+    <div class="sidebar-panel" id="panel-knowledge">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px">Documents</div>
+        <label for="kb-file-input" style="font-size:10px;color:var(--accent2);cursor:pointer;">+ Add file</label>
+        <input type="file" id="kb-file-input" multiple style="display:none">
+      </div>
+      <div id="kb-docs-list"></div>
+    </div>
+  </aside>
+
+  <!-- ── Main ──────────────────────────────────────────────────── -->
+  <main id="main">
+
+    <!-- Topbar -->
+    <div id="topbar">
+      <div id="topbar-left">
+        <button class="topbar-btn" id="sidebar-toggle" title="Toggle sidebar">☰</button>
+        <select id="model-select" title="Select AI model"></select>
+      </div>
+      <div id="topbar-title" id="topbar-title">Local AI · Powered by Ollama</div>
+      <div id="topbar-right">
+        <button class="topbar-btn" id="clear-btn" title="Clear conversation">🗑 Clear</button>
+        <button class="topbar-btn" id="settings-btn" title="Settings">⚙ Settings</button>
+      </div>
+    </div>
+
+    <!-- Chat -->
+    <div id="chat">
+      <div id="chat-inner">
+
+        <!-- Welcome -->
+        <div id="welcome">
+          <div class="welcome-orb">✦</div>
+          <div class="welcome-title">Hello, I'm <span id="ai-name-welcome">ARIA</span></div>
+          <div class="welcome-sub">Your personal AI running locally on your machine. I can browse the web, manage files, write code, open apps, and more.</div>
+          <div class="suggestions">
+            <button class="suggestion-chip" onclick="sendSuggestion(this)">
+              <span class="icon">🔍</span>Search the web for the latest AI news
+            </button>
+            <button class="suggestion-chip" onclick="sendSuggestion(this)">
+              <span class="icon">📁</span>Show me the files in my home directory
+            </button>
+            <button class="suggestion-chip" onclick="sendSuggestion(this)">
+              <span class="icon">💻</span>Write me a Python script that sorts files by type
+            </button>
+            <button class="suggestion-chip" onclick="sendSuggestion(this)">
+              <span class="icon">🖥</span>What are my system specs right now?
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages injected here by JS -->
+
+      </div><!-- /chat-inner -->
+
+      <!-- Typing indicator (outside chat-inner so it stays at bottom) -->
+      <div id="typing-indicator">
+        <div class="typing-avatar">✦</div>
+        <div class="typing-dots">
+          <div class="dot"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+        <div id="typing-label" style="font-size:12px;color:var(--text-muted);margin-left:4px;"></div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div id="input-area">
+      <div id="input-inner">
+        <div id="attachments-bar"></div>
+        <div id="input-box">
+          <div class="left-btns">
+            <label for="file-input" class="input-icon-btn" title="Attach file">📎</label>
+            <input type="file" id="file-input" multiple>
+          </div>
+          <textarea id="msg-input" rows="1" placeholder="Ask me anything..."></textarea>
+          <div class="right-btns">
+            <button id="send-btn" title="Send">➤</button>
+          </div>
+        </div>
+        <div id="input-meta">
+          <span>Enter to send &nbsp;·&nbsp; Shift+Enter for newline</span>
+          <span id="char-count" style="margin-left:auto"></span>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div><!-- /app -->
+
+<!-- Drop overlay -->
+<div id="drop-overlay">
+  <div class="drop-msg">
+    <div style="font-size:48px;margin-bottom:12px;">📂</div>
+    <div>Drop files to add to knowledge base</div>
+    <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">Documents, code, text files, PDFs</div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settings-modal">
+  <div id="settings-panel">
+    <div class="settings-title">
+      ⚙ Settings
+      <button class="settings-close" id="settings-close">✕</button>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">AI Identity</div>
+      <div class="settings-row">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Name</div>
+          <input type="text" id="cfg-name" class="settings-input" placeholder="ARIA">
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;margin-top:8px;">Personality / System Prompt</div>
+      <textarea id="cfg-personality" class="settings-textarea" rows="5"></textarea>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Ollama</div>
+      <div class="settings-row">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">URL</div>
+          <input type="text" id="cfg-ollama-url" class="settings-input" placeholder="http://localhost:11434">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Default Model</div>
+          <input type="text" id="cfg-default-model" class="settings-input" placeholder="llama3.2">
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">File Access</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Workspace Path</div>
+      <input type="text" id="cfg-workspace" class="settings-input" placeholder="~/Desktop">
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Shell Execution</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" id="cfg-enable-shell"> Enable shell commands
+        </label>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" id="cfg-shell-confirm"> Block dangerous commands
+        </label>
+      </div>
+    </div>
+
+    <button class="settings-save" id="settings-save">Save Settings</button>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
