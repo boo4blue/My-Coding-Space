@@ -11,7 +11,7 @@
   "port": 7860,
   "auto_open_browser": true,
   "workspace_path": "~/Desktop",
-  "allowed_paths": ["~", "/tmp", "~/Desktop", "~/Documents", "~/Downloads"],
+  "allowed_paths": ["~", "~/Desktop", "~/Documents", "~/Downloads", "%USERPROFILE%", "C:/Users"],
   "enable_shell": true,
   "shell_confirm_dangerous": true
 }

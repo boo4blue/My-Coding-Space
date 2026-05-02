@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import shutil
 import subprocess
@@ -7,6 +8,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+IS_WINDOWS = sys.platform == "win32"
 
 
 DANGEROUS_COMMANDS = [
@@ -107,7 +110,7 @@ You can call multiple tools. Think step-by-step."""
             from bs4 import BeautifulSoup
 
             headers = {
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120"
             }
             url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
             resp = requests.get(url, headers=headers, timeout=10)
@@ -136,7 +139,7 @@ You can call multiple tools. Think step-by-step."""
             from bs4 import BeautifulSoup
 
             headers = {
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120"
             }
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.text, "html.parser")
@@ -237,14 +240,51 @@ You can call multiple tools. Think step-by-step."""
     # ── System ───────────────────────────────────────────────────────────────
 
     def open_app(self, app_name: str) -> str:
-        app_map = {
-            "terminal": ["x-terminal-emulator", "gnome-terminal", "xterm", "konsole"],
-            "browser": ["xdg-open", "firefox", "chromium", "google-chrome"],
-            "files": ["nautilus", "dolphin", "thunar", "nemo"],
-            "vscode": ["code", "codium"],
+        if IS_WINDOWS:
+            return self._open_app_windows(app_name)
+        return self._open_app_linux(app_name)
+
+    def _open_app_windows(self, app_name: str) -> str:
+        win_map = {
+            "terminal":    ["wt", "cmd"],
+            "browser":     ["firefox", "chrome", "msedge"],
+            "files":       ["explorer"],
+            "vscode":      ["code"],
+            "notepad":     ["notepad"],
+            "calculator":  ["calc"],
+            "task manager": ["taskmgr"],
+            "paint":       ["mspaint"],
+            "wordpad":     ["wordpad"],
+        }
+        candidates = win_map.get(app_name.lower(), [app_name])
+        for cmd in candidates:
+            if shutil.which(cmd):
+                try:
+                    subprocess.Popen(
+                        [cmd],
+                        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    return f"Opened: {cmd}"
+                except Exception:
+                    continue
+        # os.startfile as Windows fallback
+        try:
+            os.startfile(app_name)
+            return f"Launched: {app_name}"
+        except Exception as e:
+            return f"[Could not open {app_name}: {e}]"
+
+    def _open_app_linux(self, app_name: str) -> str:
+        linux_map = {
+            "terminal":    ["x-terminal-emulator", "gnome-terminal", "xterm", "konsole"],
+            "browser":     ["firefox", "chromium", "google-chrome"],
+            "files":       ["nautilus", "dolphin", "thunar", "nemo"],
+            "vscode":      ["code", "codium"],
             "text editor": ["gedit", "kate", "mousepad", "xed"],
         }
-        candidates = app_map.get(app_name.lower(), [app_name])
+        candidates = linux_map.get(app_name.lower(), [app_name])
         for cmd in candidates:
             if shutil.which(cmd):
                 try:
@@ -255,9 +295,8 @@ You can call multiple tools. Think step-by-step."""
                         stderr=subprocess.DEVNULL,
                     )
                     return f"Opened: {cmd}"
-                except Exception as e:
+                except Exception:
                     continue
-        # Try xdg-open as fallback
         try:
             subprocess.Popen(
                 ["xdg-open", app_name],
@@ -301,32 +340,66 @@ You can call multiple tools. Think step-by-step."""
     def get_system_info(self) -> str:
         info = []
         try:
-            info.append(f"OS: {self.run_command('uname -a')}")
-            info.append(f"CPU: {self.run_command('nproc')} cores")
-            info.append(f"Memory: {self.run_command('free -h | head -2')}")
-            info.append(f"Disk: {self.run_command('df -h / | tail -1')}")
-            info.append(f"User: {self.run_command('whoami')}")
-            info.append(f"Uptime: {self.run_command('uptime -p')}")
+            if IS_WINDOWS:
+                info.append(f"OS: {self.run_command('ver')}")
+                info.append(f"User: {self.run_command('echo %USERNAME%')}")
+                info.append(f"CPU/Memory:\n{self.run_command('wmic computersystem get TotalPhysicalMemory,NumberOfProcessors /format:list')}")
+                info.append(f"Disk: {self.run_command('wmic logicaldisk get DeviceID,FreeSpace,Size /format:list')}")
+                info.append(f"Uptime: {self.run_command('net statistics workstation | findstr /i statistics')}")
+            else:
+                info.append(f"OS: {self.run_command('uname -a')}")
+                info.append(f"CPU: {self.run_command('nproc')} cores")
+                info.append(f"Memory: {self.run_command('free -h | head -2')}")
+                info.append(f"Disk: {self.run_command('df -h / | tail -1')}")
+                info.append(f"User: {self.run_command('whoami')}")
+                info.append(f"Uptime: {self.run_command('uptime -p')}")
         except Exception as e:
             info.append(f"Error: {e}")
         return "\n".join(info)
 
     def screenshot(self) -> str:
         save_path = self.workspace / "aria_screenshot.png"
-        cmds = [
-            ["gnome-screenshot", "-f", str(save_path)],
-            ["scrot", str(save_path)],
-            ["import", "-window", "root", str(save_path)],
-        ]
-        for cmd in cmds:
-            if shutil.which(cmd[0]):
-                try:
-                    result = subprocess.run(cmd, capture_output=True, timeout=10)
-                    if result.returncode == 0:
-                        return f"Screenshot saved to {save_path}"
-                except Exception:
-                    continue
-        return "[Screenshot failed: no compatible tool found (try: apt install scrot)]"
+        if IS_WINDOWS:
+            try:
+                from PIL import ImageGrab
+                img = ImageGrab.grab()
+                img.save(str(save_path))
+                return f"Screenshot saved to {save_path}"
+            except ImportError:
+                pass
+            try:
+                script = (
+                    f'Add-Type -AssemblyName System.Windows.Forms; '
+                    f'$s=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; '
+                    f'$b=New-Object System.Drawing.Bitmap($s.Width,$s.Height); '
+                    f'$g=[System.Drawing.Graphics]::FromImage($b); '
+                    f'$g.CopyFromScreen($s.Location,[System.Drawing.Point]::Empty,$s.Size); '
+                    f'$b.Save("{save_path}")'
+                )
+                result = subprocess.run(
+                    ["powershell", "-Command", script],
+                    capture_output=True, timeout=15
+                )
+                if result.returncode == 0:
+                    return f"Screenshot saved to {save_path}"
+            except Exception as e:
+                return f"[Screenshot failed: {e}]"
+            return "[Screenshot failed: install Pillow (pip install Pillow)]"
+        else:
+            cmds = [
+                ["gnome-screenshot", "-f", str(save_path)],
+                ["scrot", str(save_path)],
+                ["import", "-window", "root", str(save_path)],
+            ]
+            for cmd in cmds:
+                if shutil.which(cmd[0]):
+                    try:
+                        result = subprocess.run(cmd, capture_output=True, timeout=10)
+                        if result.returncode == 0:
+                            return f"Screenshot saved to {save_path}"
+                    except Exception:
+                        continue
+            return "[Screenshot failed: no compatible tool found (try: apt install scrot)]"
 
     # ── Knowledge base ───────────────────────────────────────────────────────
 
